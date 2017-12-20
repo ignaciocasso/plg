@@ -1,0 +1,269 @@
+package compilador.asint;
+
+import java_cup.runtime.*;
+import compilador.alex.AnalizadorLexico;
+import compilador.alex.UnidadLexica;
+import compilador.errores.GestionErrores;
+import compilador.Nodos;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import compilador.nodos.NodoPrograma;
+import compilador.nodos.expresiones.*;
+import compilador.nodos.sentencias.NodoSentencia;
+import compilador.nodos.sentencias.definiciones.*;
+import compilador.nodos.tipos.*;
+import compilador.nodos.variables.*;
+import compilador.nodos.sentencias.NodoCall;
+
+scan with {: return getScanner().next_token(); :};
+parser code {: 
+   private GestionErrores errores;
+      public void syntax_error(Symbol unidadLexica) {
+	   List<Integer> listaIds = this.expected_token_ids();
+	   List<String> listaNames = new ArrayList<>();
+	   for (int id : listaIds){
+		   listaNames.add(this.symbl_name_from_id(id));
+	   }
+     errores.errorSintactico((UnidadLexica)unidadLexica, listaNames);
+   }
+:};
+init with {: 
+   errores = new GestionErrores();
+   AnalizadorLexico alex = (AnalizadorLexico)getScanner();
+   alex.fijaGestionErrores(errores);
+:};
+
+terminal     IF, THEN, ELSE, WHILE, DO;
+terminal	 VOID, RETURN, CONST;
+
+terminal String IDEN;
+
+terminal	MAS, MENOS, POR, DIV, NEG, 
+			AND, OR, NOT,
+			EQU, NEQ, GT, GE, LT, LE;
+
+terminal     IGUAL, COMA, PUNTOCOMA;
+
+terminal     AP_PAR, CIERRE_PAR, AP_BLOQUE, CIERRE_BLOQUE, AP_CORCH, CIERRE_CORCH;
+
+terminal String ENT, TRUE, FALSE;
+             
+terminal     INT, BOOL;
+
+terminal	PUNT, REF;
+
+non terminal NodoPrograma Pr;
+non terminal List<NodoSentencia> Ss;
+non terminal NodoSentencia S, Dv, Dp, Df, A, C, W, B;
+non terminal NodoCall F; 
+non terminal NodoTipo T, Tp;
+non terminal NodoExpresion Term, E;
+non terminal NodoVariable V;
+non terminal List<NodoDv> ArgsD, ArgsD2;
+non terminal NodoDv ArgD;
+non terminal List<NodoExpresion> Args, Args2;
+non terminal NodoExpresion Arg;
+
+precedence nonassoc EQU, NEQ, LE, LT, GT, GE;
+precedence left MAS, MENOS, OR;
+precedence left POR, DIV, AND;
+precedence right NEG, NOT;
+
+
+Pr		::= Ss:listaSentencias
+				{: RESULT = Nodos.nodoPrograma(listaSentenciasxleft, listaSentencias); :} ;
+				
+Ss		::= Ss:listaSentencias S:sentencia 
+				{: listaSentencias.add(sentencia); RESULT = listaSentencias; :}
+		|
+				{: RESULT = new ArrayList<NodoSentencia>(); :}
+		;
+		
+S		::= Dv:decVar
+				{: RESULT = decVar; :}
+		|
+			Dp:decProc
+				{: RESULT = decProc; :}
+		|
+			Df:decFunc
+				{: RESULT = decFunc; :}
+		|
+			A:asignacion
+				{: RESULT = asignacion; :} 
+		|
+			C:ifStatement
+				{: RESULT = ifStatement; :}
+		|
+			W:whileStatement
+				{: RESULT = whileStatement; :} 
+		|
+			B:bloque
+				{: RESULT = bloque; :}
+		|
+			F:invocacion PUNTOCOMA
+				{: RESULT = invocacion; :}
+		;
+
+B	::= AP_BLOQUE:loc Ss:listaSentencias CIERRE_BLOQUE
+			{: RESULT = Nodos.nodoBloque(locxleft, listaSentencias); :} ;
+				
+Dv	::= T:tipo IDEN:id PUNTOCOMA
+			{: RESULT = Nodos.nodoDv(tipoxleft, id, tipo); :}
+	|
+		T:tipo IDEN:id IGUAL E:exp PUNTOCOMA
+			{: RESULT = Nodos.nodoDv(tipoxleft, id, tipo, exp); :}
+	|
+		CONST T:tipo IDEN:id IGUAL E:exp PUNTOCOMA
+			{: RESULT = Nodos.nodoDvCons(tipoxleft, id, tipo, exp); :}
+	;
+
+Dp	::= VOID:loc IDEN:id AP_PAR ArgsD:args CIERRE_PAR AP_BLOQUE Ss:cuerpo CIERRE_BLOQUE
+			{: RESULT = Nodos.nodoDecProc(locxleft, id, args, cuerpo); :} ;
+				
+Df	::= T:tipo IDEN:id AP_PAR ArgsD:args CIERRE_PAR AP_BLOQUE Ss:cuerpo RETURN E:ret PUNTOCOMA CIERRE_BLOQUE
+			{: RESULT = Nodos.nodoDecFunc(tipoxleft, id, args, cuerpo, tipo, ret); :} ;
+				
+	ArgsD	::=	ArgsD2:args
+					{: RESULT = args; :}
+			|
+					{: RESULT = Collections.emptyList(); :}
+			;
+	ArgsD2	::= ArgsD2:args COMA ArgD:arg
+					{: args.add(arg); RESULT = args; :}
+			|
+				ArgD:arg
+					{: List<NodoDv> l = new ArrayList<>(); l.add(arg); RESULT = l; :}
+			;
+	ArgD	::= T:tipo IDEN:id
+					{: RESULT = Nodos.nodoDecParam(tipoxleft, id, tipo); :};
+					
+C	::= IF:loc AP_PAR E:cond CIERRE_PAR THEN AP_BLOQUE Ss:cuerpo CIERRE_BLOQUE
+			{: RESULT = Nodos.nodoIf(locxleft, cond, cuerpo); :}
+	|
+        IF:loc AP_PAR E:cond CIERRE_PAR THEN AP_BLOQUE Ss:cuerpo1 CIERRE_BLOQUE ELSE AP_BLOQUE Ss:cuerpo2 CIERRE_BLOQUE
+        	{: RESULT = Nodos.nodoIfElse(locxleft, cond, cuerpo1, cuerpo2); :}
+	;
+	
+W	::= WHILE:loc AP_PAR E:cond CIERRE_PAR DO AP_BLOQUE Ss:cuerpo CIERRE_BLOQUE
+			{: RESULT = Nodos.nodoWhile(locxleft, cond, cuerpo); :} ;
+			
+A	::= V:var IGUAL:loc E:exp PUNTOCOMA
+			{: RESULT = Nodos.nodoAsignacion(locxleft, var, exp); :} ;
+			
+F	::= IDEN:id AP_PAR Args:args CIERRE_PAR
+			{: RESULT = Nodos.nodoCall(idxleft, id, args); :} ;
+
+	Args	::=	Args2:args
+					{: RESULT = args; :}
+			|
+					{: RESULT = Collections.emptyList(); :}
+			;
+	Args2	::= Args2:args COMA Arg:arg
+					{: args.add(arg); RESULT = args; :}
+			|
+				Arg:arg
+					{: List<NodoExpresion> l = new ArrayList<>(); l.add(arg); RESULT = l; :}
+			;
+	Arg		::= E:exp
+					{: RESULT = exp; :} ;			
+
+T	::= Tp:tipoPrimitivo
+			{: RESULT = tipoPrimitivo; :}
+	|
+		AP_CORCH:loc E:exp CIERRE_CORCH T:tipo
+			{: RESULT = Nodos.nodoTipoArray(locxleft, tipo, exp); :}
+	|
+		AP_CORCH:loc CIERRE_CORCH T:tipo
+			{: RESULT = Nodos.nodoTipoArray(locxleft, tipo); :}
+	|
+		PUNT:loc T:tipo
+			{: RESULT = Nodos.nodoTipoPuntero(locxleft, tipo); :}
+	;
+			
+	Tp	::= INT:loc
+				{: RESULT = Nodos.nodoInt(locxleft); :}
+		|
+			BOOL:loc
+				{: RESULT = Nodos.nodoBool(locxleft); :}
+		;
+		
+V	::= IDEN:id
+			{: RESULT = Nodos.nodoVarUse(idxleft, id); :}
+	|	
+		V:var AP_CORCH:loc E:exp CIERRE_CORCH
+			{: RESULT = Nodos.nodoAccesoArray(locxleft, var, exp); :}
+	|
+		V:var PUNT:loc
+			{: RESULT = Nodos.NodoAccesoPuntero(locxleft, var); :}
+	;
+		
+Term::= V:var
+			{: RESULT = Nodos.nodoVarExp(varxleft, var); :}
+	|
+		ENT:n
+			{: RESULT = Nodos.nodoEnt(nxleft, n); :}
+	|	
+		TRUE:loc
+			{: RESULT = Nodos.nodoTrue(locxleft); :}
+	|	
+		FALSE:loc
+			{: RESULT = Nodos.nodoFalse(locxleft); :}
+	|	
+		F:func
+			{: RESULT = Nodos.nodoFuncExp(funcxleft, func); :}
+	|
+		V:var REF:loc
+			{: RESULT = Nodos.NodoReferencia(locxleft, var); :}
+	;
+
+E	::= E:e1 MAS:loc E:e2
+			{: RESULT = Nodos.nodoMas(locxleft, e1,e2); :}
+	|
+		E:e1 MENOS:loc E:e2
+			{: RESULT = Nodos.nodoMenos(locxleft, e1,e2); :}
+	|
+		E:e1 POR:loc E:e2
+			{: RESULT = Nodos.nodoPor(locxleft, e1,e2); :}
+	| 
+		E:e1 DIV:loc E:e2
+			{: RESULT = Nodos.nodoDiv(locxleft, e1,e2); :}
+	|
+    	MENOS:loc E:e
+    		{: RESULT = Nodos.nodoNeg(locxleft, e); :} %prec NEG
+    |
+		E:e1 AND:loc E:e2
+			{: RESULT = Nodos.nodoAnd(locxleft, e1,e2); :}
+	|
+		E:e1 OR:loc E:e2
+			{: RESULT = Nodos.nodoOr(locxleft, e1,e2); :}
+	|
+		NOT:loc E:e
+			{: RESULT = Nodos.nodoNot(locxleft, e); :}
+	|
+		E:e1 EQU:loc E:e2
+			{: RESULT = Nodos.nodoEQ(locxleft, e1,e2); :}
+	|
+		E:e1 NEQ:loc E:e2
+			{: RESULT = Nodos.nodoNEQ(locxleft, e1,e2); :}
+	|
+		E:e1 GT:loc E:e2
+			{: RESULT = Nodos.nodoGT(locxleft, e1,e2); :}
+	|
+		E:e1 GE:loc E:e2
+			{: RESULT = Nodos.nodoGE(locxleft, e1,e2); :}
+	|
+		E:e1 LT:loc E:e2
+			{: RESULT = Nodos.nodoLT(locxleft, e1,e2); :}
+	|
+		E:e1 LE:loc E:e2
+			{: RESULT = Nodos.nodoLE(locxleft, e1,e2); :}
+	|
+		Term:term
+			{: RESULT = term; :}
+	|
+		AP_PAR E:e CIERRE_PAR
+			{: RESULT = e; :}
+	;
